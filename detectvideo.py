@@ -1,18 +1,20 @@
 import time
+
+import cv2
+import numpy as np
 import tensorflow as tf
+from absl import app, flags, logging
+from absl.flags import FLAGS
+from PIL import Image
+from tensorflow.compat.v1 import ConfigProto, InteractiveSession
+from tensorflow.python.saved_model import tag_constants
+
+import core.utils as utils
+from core.yolov4 import filter_boxes
+
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 if len(physical_devices) > 0:
     tf.config.experimental.set_memory_growth(physical_devices[0], True)
-from absl import app, flags, logging
-from absl.flags import FLAGS
-import core.utils as utils
-from core.yolov4 import filter_boxes
-from tensorflow.python.saved_model import tag_constants
-from PIL import Image
-import cv2
-import numpy as np
-from tensorflow.compat.v1 import ConfigProto
-from tensorflow.compat.v1 import InteractiveSession
 
 flags.DEFINE_string('framework', 'tf', '(tf, tflite, trt')
 flags.DEFINE_string('weights', './checkpoints/yolov4-416',
@@ -24,6 +26,7 @@ flags.DEFINE_string('video', './data/road.mp4', 'path to input video')
 flags.DEFINE_float('iou', 0.45, 'iou threshold')
 flags.DEFINE_float('score', 0.25, 'score threshold')
 
+
 def main(_argv):
     config = ConfigProto()
     config.gpu_options.allow_growth = True
@@ -32,7 +35,7 @@ def main(_argv):
     input_size = FLAGS.size
     video_path = FLAGS.video
 
-    print("Video from: ", video_path )
+    print("Video from: ", video_path)
     vid = cv2.VideoCapture(video_path)
 
     if FLAGS.framework == 'tflite':
@@ -43,7 +46,8 @@ def main(_argv):
         print(input_details)
         print(output_details)
     else:
-        saved_model_loaded = tf.saved_model.load(FLAGS.weights, tags=[tag_constants.SERVING])
+        saved_model_loaded = tf.saved_model.load(
+            FLAGS.weights, tags=[tag_constants.SERVING])
         infer = saved_model_loaded.signatures['serving_default']
 
     while True:
@@ -62,7 +66,8 @@ def main(_argv):
         if FLAGS.framework == 'tflite':
             interpreter.set_tensor(input_details[0]['index'], image_data)
             interpreter.invoke()
-            pred = [interpreter.get_tensor(output_details[i]['index']) for i in range(len(output_details))]
+            pred = [interpreter.get_tensor(
+                output_details[i]['index']) for i in range(len(output_details))]
             if FLAGS.model == 'yolov3' and FLAGS.tiny == True:
                 boxes, pred_conf = filter_boxes(pred[1], pred[0], score_threshold=0.25,
                                                 input_shape=tf.constant([input_size, input_size]))
@@ -85,17 +90,20 @@ def main(_argv):
             iou_threshold=FLAGS.iou,
             score_threshold=FLAGS.score
         )
-        pred_bbox = [boxes.numpy(), scores.numpy(), classes.numpy(), valid_detections.numpy()]
+        pred_bbox = [boxes.numpy(), scores.numpy(), classes.numpy(),
+                     valid_detections.numpy()]
         image = utils.draw_bbox(frame, pred_bbox)
         curr_time = time.time()
         exec_time = curr_time - prev_time
         result = np.asarray(image)
-        info = "time: %.2f ms" %(1000*exec_time)
+        info = "time: %.2f ms" % (1000*exec_time)
         print(info)
         cv2.namedWindow("result", cv2.WINDOW_AUTOSIZE)
         result = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         cv2.imshow("result", result)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
 
 if __name__ == '__main__':
     try:

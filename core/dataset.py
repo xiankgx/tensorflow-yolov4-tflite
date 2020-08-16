@@ -2,12 +2,14 @@
 # coding=utf-8
 
 import os
-import cv2
 import random
+
+import cv2
 import numpy as np
 import tensorflow as tf
-import core.utils as utils
-from core.config import cfg
+
+from . import utils
+from .config import cfg
 
 
 class Dataset(object):
@@ -15,7 +17,8 @@ class Dataset(object):
 
     def __init__(self, FLAGS, is_training: bool, dataset_type: str = "converted_coco"):
         self.tiny = FLAGS.tiny
-        self.strides, self.anchors, NUM_CLASS, XYSCALE = utils.load_config(FLAGS)
+        self.strides, self.anchors, NUM_CLASS, XYSCALE = utils.load_config(
+            FLAGS)
         self.dataset_type = dataset_type
 
         self.annot_path = (
@@ -252,6 +255,10 @@ class Dataset(object):
         return image, bboxes
 
     def parse_annotation(self, annotation):
+        if isinstance(annotation, tf.Tensor):
+            annotation = annotation.numpy().decode("utf-8")
+            # print(annotation)
+
         line = annotation.split()
         image_path = line[0]
         if not os.path.exists(image_path):
@@ -286,7 +293,6 @@ class Dataset(object):
         )
         return image, bboxes
 
-
     def preprocess_true_boxes(self, bboxes):
         label = [
             np.zeros(
@@ -299,7 +305,8 @@ class Dataset(object):
             )
             for i in range(3)
         ]
-        bboxes_xywh = [np.zeros((self.max_bbox_per_scale, 4)) for _ in range(3)]
+        bboxes_xywh = [np.zeros((self.max_bbox_per_scale, 4))
+                       for _ in range(3)]
         bbox_count = np.zeros((3,))
 
         for bbox in bboxes:
@@ -380,3 +387,61 @@ class Dataset(object):
 
     def __len__(self):
         return self.num_batchs
+
+
+class DatasetV2(Dataset):
+    """Slight modification to use tf.data.Dataset."""
+
+    def get_tf_dataset(self,
+                       epochs,
+                       batch_size=4,
+                       shuffle=True,
+                       max_workers=8):
+        if not max_workers:
+            max_workers = tf.data.experimental.AUTOTUNE
+        if epochs == 0:
+            raise ValueError(f"Invalid epochs: {epochs}")
+
+        def _py_func(x):
+            return tf.py_function(self.get_item, [x], Tout=[tf.float32 for _ in range(7)])
+
+        ds = tf.data.Dataset.from_tensor_slices(self.annotations)
+        if epochs < 0:  # Repeat forever
+            ds = ds.repeat()
+        elif epochs > 1:
+            ds = ds.repeat(epochs)
+        if shuffle:
+            ds = ds.shuffle(self.num_samples)
+        ds = ds.map(_py_func, num_parallel_calls=max_workers)
+        ds = ds.batch(batch_size)
+        ds = ds.prefetch(10)
+        return ds
+
+    def get_item(self, annotation):
+        # self.train_input_size = random.choice(self.train_input_sizes)
+        self.train_input_size = cfg.TRAIN.INPUT_SIZE
+        self.train_output_sizes = self.train_input_size // self.strides
+
+        # annotation = self.annotations[index]
+        image, bboxes = self.parse_annotation(annotation)
+        (
+            label_sbbox,
+            label_mbbox,
+            label_lbbox,
+            sbboxes,
+            mbboxes,
+            lbboxes,
+        ) = self.preprocess_true_boxes(bboxes)
+
+        return (
+            image,
+
+            # (
+            #     (label_sbbox, sbboxes),
+            #     (label_mbbox, mbboxes),
+            #     (label_lbbox, lbboxes),
+            # )
+            label_sbbox, sbboxes,
+            label_mbbox, mbboxes,
+            label_lbbox, lbboxes
+        )
